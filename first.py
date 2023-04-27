@@ -124,12 +124,11 @@ class likelihood:
 
     #function that evaluates the log likelihood
     def eval(self,mu,nuis=[]):
-
+        lamb = sum(self.bkg_exp*nuis[1:]) + mu*sum(self.sig_exp*nuis[0])
         #print('lambda: ',lamb,' data: ',self.data_obs)
         #print('poisson: ',poisson.pmf(self.data_obs, lamb))
         if nuis == []:
             ## the signal nuisance must be first!
-            lamb = sum(self.bkg_exp*nuis[1:]) + mu*sum(self.sig_exp*nuis[0])
             prior = np.prod([lognorm.logpdf(value,unc-1.0) for value,unc in zip(nuis,self.nuis_unc)])
             return -poisson.logpmf(self.data_obs, lamb)-prior
 
