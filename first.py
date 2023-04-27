@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.stats import poisson
+from scipy.stats import poisson, lognorm, norm
 import matplotlib.pyplot as plt
 import scipy.integrate as integrate
 
@@ -16,9 +16,6 @@ class naive_limit:
             val+=self.llh.eval(mu_min+i*(mu_max-mu_min)/N)*(mu_max-mu_min)/N
         return val
 
-    def set_data(self, data):
-        for i in range(self.bin.num_bins):
-            self.bin[i].set_data(data[i])
     def plot_likelihood(self, mu_min, mu_max, N=1000):
         # plot the likelihood
         # return the plot
@@ -33,19 +30,19 @@ class naive_limit:
         temp=0
 
         norm = integrate.quad(self.llh.eval, 0, 50)[0]
-        #print('norm: ',norm)
+        print('norm: ',norm)
         for i in np.arange(0,50,1):
-            #print("i: ",i," integral: ",integrate.quad(self.eval, 0, i)[0]/norm)
+            print("i: ",i," integral: ",integrate.quad(self.llh.eval, 0, i)[0]/norm)
             if integrate.quad(self.llh.eval, 0, i)[0] / norm > CL:
                 temp = i
                 break
         for i in np.arange(temp-1,temp+1,0.1):
-            #print("i: ",i," integral: ",integrate.quad(self.eval, 0, i)[0] / norm)
+            #print("i: ",i," integral: ",integrate.quad(self.llh.eval, 0, i)[0] / norm)
             if integrate.quad(self.llh.eval, 0, i)[0] / norm > CL:
                 temp = i
                 break
         for i in np.arange(temp-0.1,temp+0.1,0.01):
-            #print("i: ",i," integral: ",integrate.quad(self.eval, 0, i)[0] / norm)
+            #print("i: ",i," integral: ",integrate.quad(self.llh.eval, 0, i)[0] / norm)
             if integrate.quad(self.llh.eval, 0, i)[0] / norm > CL:
                 return i
         print("No limit found")
@@ -64,21 +61,42 @@ class naive_limit:
 class multibin_likelihood:
     def __init__(self, num_bins):
         self.num_bins = num_bins
-        self.bins = []
+        self.bin = []
+        self.bin_name = []
         self.mu = 0.
+        self.nuis_type = []
+        self.nuis_name = []
+        self.nuis_unc = []
+        self.nuis = []
 
-    def add_bin(self, data_obs=0, bkg_exp=[], sig_exp=[]):
-        self.bins.append(likelihood(data_obs, bkg_exp, sig_exp))
+    def add_systematic(self, bin_index, name, type, unc):
+        if not name in self.nuis_name:
+            self.nuis_name.append(name)
+            self.nuis_type.append(type)
+            self.nuis.append(1.0)
+        self.bin(bin_index).add_nuisance(name, type, unc)
+
+    def get_bin_index(self, name):
+        if name in self.bin_name:
+            return self.bin_name.index(name)
+        else:
+            return -1
+    def add_bin(self, name = "", data_obs=0, bkg_exp=[], sig_exp=[]):
+        if name in self.bin_name:
+            print("ERROR: bin name already exists")
+            return
+        self.bin.append(likelihood(data_obs, bkg_exp, sig_exp))
+        self.bin_name.append(name)
 
     def eval(self, mu):
-        return np.prod([self.bins[i].eval(mu) for i in range(self.num_bins)])
+        return np.prod([self.bin[i].eval(mu) for i in range(self.num_bins)])
 
     def generate_data(self, mu):
-        return [self.bins[i].generate_data(mu) for i in range(self.num_bins)]
+        return [self.bin[i].generate_data(mu) for i in range(self.num_bins)]
 
     def set_data(self, data):
         for i in range(self.num_bins):
-            self.bins[i].set_data(data[i])
+            self.bin[i].set_data(data[i])
     def set_mu(self, mu):
             self.mu = mu
     def get_mu(self):
@@ -90,9 +108,34 @@ class likelihood:
         self.bkg_exp = bkg_exp
         self.sig_exp = sig_exp
         self.mu = 0.
-    def eval(self,mu):
-        lamb = sum(self.bkg_exp) + mu*sum(self.sig_exp)
-        return poisson.pmf(self.data_obs, lamb)
+        self.nuis_type = []
+        self.nuis_name = []
+        self.nuis_unc = []
+        self.nuis = []
+
+    def add_nuisance(self, name, type, unc):
+        self.nuis_name.append(name)
+        self.nuis_type.append(type)
+        self.nuis_unc.append(unc)
+
+    def eval_with_nuis(self,x=[],mu=0.):
+        prior = np.prod([lognorm.pdf(value[0],value[1]-1.0) for name,value in self.nuis ])
+        return self.eval(x[0],prior)
+
+    #function that evaluates the log likelihood
+    def eval(self,mu,nuis=[]):
+
+        #print('lambda: ',lamb,' data: ',self.data_obs)
+        #print('poisson: ',poisson.pmf(self.data_obs, lamb))
+        if nuis == []:
+            ## the signal nuisance must be first!
+            lamb = sum(self.bkg_exp*nuis[1:]) + mu*sum(self.sig_exp*nuis[0])
+            prior = np.prod([lognorm.logpdf(value,unc-1.0) for value,unc in zip(nuis,self.nuis_unc)])
+            return -poisson.logpmf(self.data_obs, lamb)-prior
+
+        else :
+            prior = np.prod([lognorm.logpdf(value,unc-1.0) for value,unc in zip(self.nuis,self.nuis_unc)])
+            return -poisson.logpmf(self.data_obs, lamb) - prior
 
     def generate_data(self, mu):
         lamb = sum(self.bkg_exp) + mu*sum(self.sig_exp)
@@ -119,8 +162,8 @@ def test():
     lim.plot_likelihood(0, 10, 1000)
     print("limits: ",lim.compute_limit())
 
-    limits = lim.run_toy_experiments(0, 100)
-    plt.hist(limits, bins=100)
+    limits = lim.run_toy_experiments(0, 300)
+    plt.hist(limits, bins=50)
     plt.show()
 
 if __name__ == "__main__":
